@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Callable
 
 from confluent_kafka import Consumer, Producer
@@ -20,11 +21,23 @@ def _get_consumer(group_id: str, topics: list[str]) -> Consumer:
         {
             "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
             "group.id": group_id,
-            "auto.offset.reset": "earliest",
+            "auto.offset.reset": "latest",
             "enable.auto.commit": True,
+            "session.timeout.ms": "6000",
+            "max.poll.interval.ms": "10000",
+            "metadata.max.age.ms": "1000",
+            "socket.timeout.ms": "10000",
         }
     )
-    c.subscribe(topics)
+    c.subscribe([t.value if hasattr(t, "value") else str(t) for t in topics])
+    # Wait until Kafka propagates partition metadata and assigns partitions.
+    for _ in range(20):
+        c.poll(timeout=0.5)
+        if c.assignment():
+            break
+        time.sleep(0.5)
+    else:
+        logger.warning(f"Consumer assignment still empty after retries for topics={topics}")
     return c
 
 

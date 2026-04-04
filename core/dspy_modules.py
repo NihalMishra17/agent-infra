@@ -7,7 +7,7 @@ import dspy
 
 def configure_dspy() -> None:
     lm = dspy.LM(
-        model=f"anthropic/{os.getenv('DSPY_MODEL', 'claude-3-5-haiku-20241022')}",
+        model=f"anthropic/{os.getenv('DSPY_MODEL', 'claude-haiku-4-5')}",
         max_tokens=int(os.getenv("DSPY_MAX_TOKENS", "1024")),
     )
     dspy.configure(lm=lm)

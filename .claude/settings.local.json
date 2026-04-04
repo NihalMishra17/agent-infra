@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(poetry run:*)",
+      "Bash(1 poetry:*)",
+      "Bash(docker compose:*)",
+      "Read(//Users/nihal/Library/Caches/pypoetry/virtualenvs/**)",
+      "Read(//Users/nihal/Library/Caches/pypoetry/**)",
+      "Bash(source /Users/nihal/Library/Caches/pypoetry/virtualenvs/agent-infra-tkrHu4Kp-py3.12/bin/activate)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

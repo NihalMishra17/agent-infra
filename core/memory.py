@@ -36,7 +36,7 @@ class MemoryClient:
             return
         self._collection = self._client.collections.create(
             name=COLLECTION_NAME,
-            vectorizer_config=Configure.Vectorizer.text2vec_openai(),
+            vector_config=Configure.Vectors.text2vec_transformers(),
             properties=[
                 Property(name="agent_id", data_type=DataType.TEXT),
                 Property(name="goal_id", data_type=DataType.TEXT),

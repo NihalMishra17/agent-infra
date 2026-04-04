@@ -1,4 +1,5 @@
 [tool.poetry]
+package-mode = false
 name = "agent-infra"
 version = "0.1.0"
 description = "Distributed AI Agent Infrastructure — MCP + Kafka + Weaviate + DSPy + AKS"
