@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+import threading
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -20,7 +21,7 @@ from config.topics import ALL_TOPICS, Topic
 from core.dspy_modules import ExecutorModule, configure_dspy
 from core.kafka import KafkaConsumerLoop, KafkaPublisher, ensure_topics
 from core.memory import MemoryClient
-from core.models import Task, TaskResult
+from core.models import CriticFeedback, Task, TaskResult
 
 load_dotenv()
 
@@ -39,47 +40,56 @@ class ExecutorAgent:
             topics=[Topic.TASKS_ASSIGNED],
             handler=self._handle_task,
         )
+        self._retry_loop = KafkaConsumerLoop(
+            group_id=os.getenv("EXECUTOR_CONSUMER_GROUP", "executor-group") + "-retry",
+            topics=[Topic.TASKS_REJECTED],
+            handler=self._handle_rejection,
+        )
+
+    def _execute_and_publish(self, task_id: str, goal_id: str, description: str, past_context: str) -> None:
+        output = self._module(task_description=description, past_context=past_context)
+        logger.info(f"Task {task_id} executed ({len(output)} chars)")
+        result = TaskResult(
+            task_id=task_id,
+            goal_id=goal_id,
+            task_description=description,
+            output=output,
+            metadata={"agent_id": AGENT_ID},
+        )
+        self._publisher.publish(Topic.TASKS_COMPLETED, result, key=goal_id)
+        self._memory.store(
+            agent_id=AGENT_ID,
+            goal_id=goal_id,
+            content=f"Task: {description}\nResult: {output}",
+        )
 
     def _handle_task(self, payload: dict) -> None:
         task = Task(**payload)
         logger.info(f"Executor received task {task.task_id}: {task.description[:80]}")
-
-        # check memory — has a similar task been done before?
-        memories = self._memory.search(
-            query=task.description,
-            agent_id=AGENT_ID,
-            limit=3,
-        )
+        memories = self._memory.search(query=task.description, agent_id=AGENT_ID, limit=3)
         past_context = "\n".join(m["content"] for m in memories) if memories else ""
         if past_context:
             logger.debug(f"Found {len(memories)} relevant memories for task {task.task_id}")
+        self._execute_and_publish(task.task_id, task.goal_id, task.description, past_context)
 
-        # execute
-        output = self._module(task_description=task.description, past_context=past_context)
-        logger.info(f"Task {task.task_id} completed ({len(output)} chars)")
-
-        # publish result
-        result = TaskResult(
-            task_id=task.task_id,
-            goal_id=task.goal_id,
-            output=output,
-            metadata={"agent_id": AGENT_ID},
-        )
-        self._publisher.publish(Topic.TASKS_COMPLETED, result, key=task.goal_id)
-
-        # store result in memory
-        self._memory.store(
-            agent_id=AGENT_ID,
-            goal_id=task.goal_id,
-            content=f"Task: {task.description}\nResult: {output}",
-        )
+    def _handle_rejection(self, payload: dict) -> None:
+        fb = CriticFeedback(**payload)
+        logger.info(f"Executor retrying rejected task {fb.task_id} (score={fb.score}): {fb.feedback[:80]}")
+        memories = self._memory.search(query=fb.task_description, agent_id=AGENT_ID, limit=3)
+        past_context = "\n".join(m["content"] for m in memories) if memories else ""
+        # append critic feedback so the LLM knows what to improve
+        past_context = f"Previous attempt was rejected (score {fb.score}/10).\nCritic feedback: {fb.feedback}\nPrevious output: {fb.output}\n\n{past_context}".strip()
+        self._execute_and_publish(fb.task_id, fb.goal_id, fb.task_description, past_context)
 
     def run(self) -> None:
         logger.info("Executor agent started")
+        retry_thread = threading.Thread(target=self._retry_loop.run, daemon=True)
+        retry_thread.start()
         self._loop.run()
 
     def stop(self) -> None:
         self._loop.stop()
+        self._retry_loop.stop()
         self._publisher.flush()
         self._memory.close()
 

@@ -16,7 +16,7 @@ from loguru import logger
 
 from config.topics import Topic
 from core.kafka import KafkaConsumerLoop, KafkaPublisher, ensure_topics
-from core.models import Goal, TaskResult
+from core.models import FinalSummary, Goal, TaskResult
 
 load_dotenv()
 
@@ -24,12 +24,13 @@ GOAL_TOPIC = "goals.submitted"
 
 
 def submit_and_watch(goal_text: str) -> None:
-    ensure_topics([GOAL_TOPIC, Topic.TASKS_COMPLETED, Topic.TASKS_APPROVED])
+    ensure_topics([GOAL_TOPIC, Topic.TASKS_COMPLETED, Topic.GOALS_SUMMARIZED])
 
     publisher = KafkaPublisher()
     goal = Goal(description=goal_text)
 
     results: list[TaskResult] = []
+    done = threading.Event()
 
     def handle_result(payload: dict) -> None:
         result = TaskResult(**payload)
@@ -37,32 +38,48 @@ def submit_and_watch(goal_text: str) -> None:
             results.append(result)
             print(f"\n{'─'*60}")
             print(f"Task completed: {result.task_id[:8]}...")
-            print(f"{result.output}")
+            print(result.output)
             print(f"{'─'*60}")
 
-    consumer_loop = KafkaConsumerLoop(
+    def handle_summary(payload: dict) -> None:
+        summary = FinalSummary(**payload)
+        if summary.goal_id == goal.goal_id:
+            print(f"\n{'═'*60}")
+            print(f"FINAL ANSWER ({summary.task_count} tasks synthesized)")
+            print(f"{'─'*60}")
+            print(summary.summary)
+            print(f"{'═'*60}\n")
+            done.set()
+
+    result_loop = KafkaConsumerLoop(
         group_id=f"cli-{goal.goal_id[:8]}",
         topics=[Topic.TASKS_COMPLETED],
         handler=handle_result,
     )
+    summary_loop = KafkaConsumerLoop(
+        group_id=f"cli-summary-{goal.goal_id[:8]}",
+        topics=[Topic.GOALS_SUMMARIZED],
+        handler=handle_summary,
+    )
 
-    # start consumer in background
-    t = threading.Thread(target=consumer_loop.run, daemon=True)
-    t.start()
+    threading.Thread(target=result_loop.run, daemon=True).start()
+    threading.Thread(target=summary_loop.run, daemon=True).start()
 
-    # publish goal
     publisher.publish(GOAL_TOPIC, goal, key=goal.goal_id)
     print(f"\nGoal submitted: {goal.goal_id}")
     print(f"Description: {goal_text}\n")
     print("Waiting for results (Ctrl+C to stop)...\n")
 
     try:
-        while True:
+        while not done.is_set():
             time.sleep(1)
     except KeyboardInterrupt:
-        consumer_loop.stop()
+        pass
+    finally:
+        result_loop.stop()
+        summary_loop.stop()
         publisher.flush()
-        print(f"\n\nTotal tasks completed: {len(results)}")
+        print(f"\nTotal tasks completed: {len(results)}")
 
 
 if __name__ == "__main__":

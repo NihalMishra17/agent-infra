@@ -32,9 +32,41 @@ class TaskResult(BaseModel):
 
     task_id: str
     goal_id: str
+    task_description: str = ""
     output: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CriticFeedback(BaseModel):
+    """Published by the Critic to tasks.rejected when a result scores < 7."""
+
+    task_id: str
+    goal_id: str
+    task_description: str
+    output: str       # the rejected output
+    score: int
+    feedback: str     # what the executor should improve
+    evaluated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class GoalPlan(BaseModel):
+    """Published by the Planner after decomposition so the Summarizer knows the expected task count."""
+
+    goal_id: str
+    description: str
+    task_count: int
+    planned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FinalSummary(BaseModel):
+    """Published by the Summarizer once all approved results for a goal are synthesized."""
+
+    goal_id: str
+    description: str
+    summary: str
+    task_count: int
+    summarized_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Goal(BaseModel):

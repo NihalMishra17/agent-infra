@@ -21,7 +21,7 @@ from config.topics import ALL_TOPICS, Topic
 from core.dspy_modules import PlannerModule, configure_dspy
 from core.kafka import KafkaConsumerLoop, KafkaPublisher, ensure_topics
 from core.memory import MemoryClient
-from core.models import Goal, Task
+from core.models import Goal, GoalPlan, Task
 
 load_dotenv()
 
@@ -59,6 +59,11 @@ class PlannerAgent:
             task = Task(goal_id=goal.goal_id, description=desc)
             self._publisher.publish(Topic.TASKS_ASSIGNED, task, key=goal.goal_id)
             logger.info(f"  → Published task {task.task_id}: {desc[:60]}")
+
+        # publish goal plan so the summarizer knows the expected task count
+        plan = GoalPlan(goal_id=goal.goal_id, description=goal.description, task_count=len(subtask_descriptions))
+        self._publisher.publish(Topic.GOALS_PLANNED, plan, key=goal.goal_id)
+        logger.info(f"  → Published GoalPlan: {len(subtask_descriptions)} tasks for goal {goal.goal_id[:8]}")
 
         # store decomposition in memory
         self._memory.store(

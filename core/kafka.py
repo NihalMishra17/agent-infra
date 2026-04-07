@@ -24,7 +24,7 @@ def _get_consumer(group_id: str, topics: list[str]) -> Consumer:
             "auto.offset.reset": "latest",
             "enable.auto.commit": True,
             "session.timeout.ms": "6000",
-            "max.poll.interval.ms": "10000",
+            "max.poll.interval.ms": "300000",
             "metadata.max.age.ms": "1000",
             "socket.timeout.ms": "10000",
         }
