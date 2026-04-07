@@ -81,5 +81,35 @@ class MemoryClient:
             for o in results.objects
         ]
 
+    def count_by_goal(self, goal_id: str) -> dict[str, int]:
+        """Return the number of memory entries per agent_id for a given goal."""
+        from weaviate.classes.query import Filter
+        results = self._collection.query.fetch_objects(
+            filters=Filter.by_property("goal_id").equal(goal_id),
+            limit=200,
+        )
+        counts: dict[str, int] = {}
+        for obj in results.objects:
+            aid = obj.properties.get("agent_id", "unknown")
+            counts[aid] = counts.get(aid, 0) + 1
+        return counts
+
+    def fetch_summary(self, goal_id: str) -> str | None:
+        """Return the final summary stored by the summarizer for a goal, or None."""
+        from weaviate.classes.query import Filter
+        results = self._collection.query.fetch_objects(
+            filters=(
+                Filter.by_property("goal_id").equal(goal_id)
+                & Filter.by_property("agent_id").equal("summarizer")
+            ),
+            limit=1,
+        )
+        if not results.objects:
+            return None
+        content: str = results.objects[0].properties.get("content", "")
+        marker = "Final Summary:\n"
+        idx = content.find(marker)
+        return content[idx + len(marker):].strip() if idx != -1 else content
+
     def close(self) -> None:
         self._client.close()

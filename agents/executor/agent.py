@@ -13,6 +13,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -27,10 +28,12 @@ load_dotenv()
 
 
 AGENT_ID = "executor"
+MAX_RETRIES = 3
 
 
 class ExecutorAgent:
     def __init__(self) -> None:
+        self._retry_counts: dict[str, int] = {}  # task_id → rejection count
         configure_dspy()
         self._publisher = KafkaPublisher()
         self._memory = MemoryClient()
@@ -73,11 +76,16 @@ class ExecutorAgent:
         self._execute_and_publish(task.task_id, task.goal_id, task.description, past_context)
 
     def _handle_rejection(self, payload: dict) -> None:
+        time.sleep(5)
         fb = CriticFeedback(**payload)
-        logger.info(f"Executor retrying rejected task {fb.task_id} (score={fb.score}): {fb.feedback[:80]}")
+        count = self._retry_counts.get(fb.task_id, 0) + 1
+        self._retry_counts[fb.task_id] = count
+        if count > MAX_RETRIES:
+            logger.warning(f"Task {fb.task_id} rejected {count} times — giving up (max={MAX_RETRIES})")
+            return
+        logger.info(f"Executor retrying rejected task {fb.task_id} (attempt {count}/{MAX_RETRIES}, score={fb.score}): {fb.feedback[:80]}")
         memories = self._memory.search(query=fb.task_description, agent_id=AGENT_ID, limit=3)
         past_context = "\n".join(m["content"] for m in memories) if memories else ""
-        # append critic feedback so the LLM knows what to improve
         past_context = f"Previous attempt was rejected (score {fb.score}/10).\nCritic feedback: {fb.feedback}\nPrevious output: {fb.output}\n\n{past_context}".strip()
         self._execute_and_publish(fb.task_id, fb.goal_id, fb.task_description, past_context)
 
