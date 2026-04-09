@@ -12,6 +12,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -25,6 +26,7 @@ from core.models import FinalSummary, GoalPlan, TaskResult
 load_dotenv()
 
 AGENT_ID = "summarizer"
+STALE_TIMEOUT = 120  # seconds with no new results before force-synthesizing
 
 
 class SummarizerAgent:
@@ -39,6 +41,7 @@ class SummarizerAgent:
         self._expected: dict[str, int] = {}         # goal_id → expected task count
         self._descriptions: dict[str, str] = {}     # goal_id → goal description
         self._results: dict[str, list[str]] = {}    # goal_id → list of approved outputs
+        self._last_update: dict[str, float] = {}    # goal_id → timestamp of last approved result
 
         self._plan_loop = KafkaConsumerLoop(
             group_id=os.getenv("SUMMARIZER_CONSUMER_GROUP", "summarizer-group") + "-plans",
@@ -66,19 +69,23 @@ class SummarizerAgent:
         with self._lock:
             self._results.setdefault(result.goal_id, [])
             self._results[result.goal_id].append(result.output)
+            self._last_update[result.goal_id] = time.monotonic()
         self._maybe_summarize(result.goal_id)
 
-    def _maybe_summarize(self, goal_id: str) -> None:
+    def _maybe_summarize(self, goal_id: str, force: bool = False) -> None:
         with self._lock:
             expected = self._expected.get(goal_id)
-            collected = self._results.get(goal_id, [])
+            collected = list(self._results.get(goal_id, []))
             description = self._descriptions.get(goal_id, "")
-            ready = expected is not None and len(collected) >= expected
+            ready = (expected is not None and len(collected) >= expected) or (force and len(collected) > 0)
 
         if not ready:
             return
 
-        logger.info(f"All {len(collected)} tasks approved for goal {goal_id[:8]} — synthesizing final answer")
+        if force:
+            logger.warning(f"Goal {goal_id[:8]} stale — synthesizing with {len(collected)}/{expected} approved results (skipped task assumed permanent)")
+        else:
+            logger.info(f"All {len(collected)} tasks approved for goal {goal_id[:8]} — synthesizing final answer")
         summary_text = self._module(goal=description, results=collected)
 
         summary = FinalSummary(
@@ -108,10 +115,26 @@ class SummarizerAgent:
             self._descriptions.pop(goal_id, None)
             self._results.pop(goal_id, None)
 
+    def _stale_checker(self) -> None:
+        while True:
+            time.sleep(30)
+            with self._lock:
+                stale = [
+                    gid for gid, results in self._results.items()
+                    if results
+                    and self._expected.get(gid) is not None
+                    and len(results) < self._expected[gid]
+                    and time.monotonic() - self._last_update.get(gid, 0) > STALE_TIMEOUT
+                ]
+            for goal_id in stale:
+                self._maybe_summarize(goal_id, force=True)
+
     def run(self) -> None:
         logger.info("Summarizer agent started")
         plan_thread = threading.Thread(target=self._plan_loop.run, daemon=True)
         plan_thread.start()
+        stale_thread = threading.Thread(target=self._stale_checker, daemon=True)
+        stale_thread.start()
         self._result_loop.run()
 
     def stop(self) -> None:

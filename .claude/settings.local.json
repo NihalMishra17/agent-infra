@@ -10,7 +10,11 @@
       "Bash(python -c \":*)",
       "Bash(curl -s http://localhost:8080/v1/.well-known/ready 2)",
       "Bash(1 docker:*)",
-      "Bash(python -c \"from cli import submit_and_watch; print\\(''cli import OK''\\)\")"
+      "Bash(python -c \"from cli import submit_and_watch; print\\(''cli import OK''\\)\")",
+      "Bash(pip install:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(python -c \"from agents.summarizer.agent import SummarizerAgent; print\\(''import OK''\\)\")"
     ]
   }
 }

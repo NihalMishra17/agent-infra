@@ -94,6 +94,22 @@ class MemoryClient:
             counts[aid] = counts.get(aid, 0) + 1
         return counts
 
+    def fetch_all_by_goal(self, goal_id: str, agent_id: str | None = None) -> list[dict[str, Any]]:
+        """Fetch all memory entries for a goal, optionally filtered by agent_id."""
+        from weaviate.classes.query import Filter
+        f = Filter.by_property("goal_id").equal(goal_id)
+        if agent_id:
+            f = f & Filter.by_property("agent_id").equal(agent_id)
+        results = self._collection.query.fetch_objects(filters=f, limit=200)
+        return [
+            {
+                "agent_id": obj.properties.get("agent_id", ""),
+                "goal_id": obj.properties.get("goal_id", ""),
+                "content": obj.properties.get("content", ""),
+            }
+            for obj in results.objects
+        ]
+
     def fetch_summary(self, goal_id: str) -> str | None:
         """Return the final summary stored by the summarizer for a goal, or None."""
         from weaviate.classes.query import Filter
